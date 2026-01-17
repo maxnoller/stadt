@@ -1,1 +1,8 @@
-cargo fmt
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Format check (fails if code isn't formatted)
+cargo fmt -- --check
+
+# Clippy linting (fails on warnings)
+cargo clippy -- -D warnings
