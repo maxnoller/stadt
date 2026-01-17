@@ -1,5 +1,4 @@
-#!/bin/sh
-. "$(dirname "$0")/_/husky.sh"
+
 
 # Format check (fails if code isn't formatted)
 cargo fmt -- --check
