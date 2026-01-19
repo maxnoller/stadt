@@ -1,16 +1,30 @@
+use bevy::pbr::MaterialPlugin;
 use bevy::prelude::*;
 use fastnoise_lite::{FastNoiseLite, FractalType, NoiseType};
 use std::collections::HashMap;
+
+pub mod material;
+
+pub use material::{ATTRIBUTE_MORPH_HEIGHT, TerrainMaterial};
 
 pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<TerrainConfig>()
+        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
+            .init_resource::<TerrainConfig>()
             .init_resource::<ChunkMap>()
+            .init_resource::<TerrainMaterialHandle>()
             .insert_resource(TerrainNoise::default())
-            .add_systems(Update, update_chunks);
+            .add_systems(Startup, setup_terrain_material)
+            .add_systems(Update, (update_chunks, update_chunk_lod));
     }
+}
+
+/// Shared material handle for all terrain chunks (reduces GPU memory)
+#[derive(Resource, Default)]
+pub struct TerrainMaterialHandle {
+    pub handle: Option<Handle<TerrainMaterial>>,
 }
 
 #[derive(Resource)]
@@ -21,20 +35,33 @@ pub struct TerrainConfig {
     pub water_level: f32,
     pub mountain_threshold: f32,
     pub warp_strength: f32,
+    /// Depth of skirts below chunk edges to hide LOD seams
+    pub skirt_depth: f32,
+    /// Distance thresholds for LOD transitions [near, mid, far]
+    pub lod_distances: [f32; 3],
+    /// Mesh subdivisions for each LOD level [highest, high, medium, low]
+    pub lod_subdivisions: [u32; 4],
 }
 
 impl Default for TerrainConfig {
     fn default() -> Self {
         Self {
             chunk_size: 100.0,
-            render_distance: 50, // Doubled from 25 to 50 for huge view distance
+            render_distance: 50,
             max_height: 180.0,
             water_level: 15.0,
             mountain_threshold: 0.6,
             warp_strength: 60.0,
+            skirt_depth: 50.0,
+            lod_distances: [300.0, 1000.0, 2500.0],
+            lod_subdivisions: [64, 32, 16, 8],
         }
     }
 }
+
+/// Hysteresis buffer for LOD transitions (percentage of distance threshold)
+/// Prevents rapid LOD switching when camera is near a boundary
+pub const LOD_HYSTERESIS: f32 = 0.15;
 
 #[derive(Resource, Default)]
 pub struct ChunkMap {
@@ -63,27 +90,27 @@ impl Default for TerrainNoise {
         // Continental noise - define large flat areas vs ocean/mountains
         let mut continental = FastNoiseLite::with_seed(42);
         continental.set_noise_type(Some(NoiseType::OpenSimplex2S));
-        continental.set_frequency(Some(0.0004)); // Slightly lower for broader features
+        continental.set_frequency(Some(0.0004));
         continental.set_fractal_type(Some(FractalType::FBm));
         continental.set_fractal_octaves(Some(4));
 
         // Erosion noise - gentle rolling hills
         let mut erosion = FastNoiseLite::with_seed(123);
         erosion.set_noise_type(Some(NoiseType::OpenSimplex2S));
-        erosion.set_frequency(Some(0.0015)); // Lower freq for smoother hills
+        erosion.set_frequency(Some(0.0015));
         erosion.set_fractal_type(Some(FractalType::FBm));
-        erosion.set_fractal_octaves(Some(4)); // Fewer octaves = less jagged
+        erosion.set_fractal_octaves(Some(4));
         erosion.set_fractal_lacunarity(Some(2.0));
-        erosion.set_fractal_gain(Some(0.4)); // Lower gain = smoother
+        erosion.set_fractal_gain(Some(0.4));
 
         // Ridge noise - distinct mountain ranges
         let mut ridges = FastNoiseLite::with_seed(456);
         ridges.set_noise_type(Some(NoiseType::OpenSimplex2S));
-        ridges.set_frequency(Some(0.003)); // Lower frequency for larger mountains
+        ridges.set_frequency(Some(0.003));
         ridges.set_fractal_type(Some(FractalType::Ridged));
         ridges.set_fractal_octaves(Some(5));
         ridges.set_fractal_lacunarity(Some(2.0));
-        ridges.set_fractal_gain(Some(0.4)); // Lower gain to reduce spikes
+        ridges.set_fractal_gain(Some(0.4));
 
         // Domain warp noise
         let mut warp = FastNoiseLite::with_seed(789);
@@ -95,14 +122,14 @@ impl Default for TerrainNoise {
         // Moisture noise
         let mut moisture = FastNoiseLite::with_seed(999);
         moisture.set_noise_type(Some(NoiseType::OpenSimplex2S));
-        moisture.set_frequency(Some(0.0005)); // Very broad climate zones
+        moisture.set_frequency(Some(0.0005));
         moisture.set_fractal_type(Some(FractalType::FBm));
         moisture.set_fractal_octaves(Some(3));
 
         // Detail noise
         let mut detail = FastNoiseLite::with_seed(1011);
         detail.set_noise_type(Some(NoiseType::OpenSimplex2S));
-        detail.set_frequency(Some(0.05)); // High freq for texture
+        detail.set_frequency(Some(0.05));
         detail.set_fractal_type(Some(FractalType::FBm));
         detail.set_fractal_octaves(Some(2));
 
@@ -120,9 +147,11 @@ impl Default for TerrainNoise {
 #[derive(Component)]
 pub struct Chunk {
     pub coords: IVec2,
+    /// Current LOD level (subdivisions) for this chunk
+    pub current_lod: u32,
 }
 
 pub mod mesh;
 mod systems;
 
-use systems::update_chunks;
+use systems::{setup_terrain_material, update_chunk_lod, update_chunks};
