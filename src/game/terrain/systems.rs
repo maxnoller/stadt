@@ -29,21 +29,30 @@ pub fn update_chunks(
             if let std::collections::hash_map::Entry::Vacant(e) =
                 chunk_map.chunks.entry(chunk_coords)
             {
-                // Generate chunk
+                // Calculate LOD based on distance from camera
+                let chunk_center = Vec3::new(
+                    chunk_coords.x as f32 * config.chunk_size,
+                    0.0,
+                    chunk_coords.y as f32 * config.chunk_size,
+                );
+                let distance = (chunk_center - camera_pos).length();
+                let subdivisions = calculate_lod(distance);
+
+                // Generate chunk mesh with new noise system
                 let mesh = generate_chunk_mesh(
                     chunk_coords,
                     config.chunk_size,
-                    20, // subdivisions
-                    config.max_height,
-                    &noise.noise,
+                    subdivisions,
+                    &noise,
+                    &config,
                 );
 
                 let mesh_handle = meshes.add(mesh);
                 let material_handle = materials.add(StandardMaterial {
                     base_color: Color::WHITE, // Vertex colors will modulate this
-                    perceptual_roughness: 0.8,
+                    perceptual_roughness: 0.85,
                     metallic: 0.0,
-                    reflectance: 0.3,
+                    reflectance: 0.25,
                     ..default()
                 });
 
@@ -80,5 +89,18 @@ pub fn update_chunks(
 
     for coords in to_remove {
         chunk_map.chunks.remove(&coords);
+    }
+}
+
+/// Calculate mesh subdivisions based on distance from camera (LOD)
+fn calculate_lod(distance: f32) -> u32 {
+    if distance < 500.0 {
+        32 // High detail for nearby chunks (increased range)
+    } else if distance < 1500.0 {
+        20 // Medium detail
+    } else if distance < 3000.0 {
+        12 // Lower detail for mid-range
+    } else {
+        4 // Minimum detail for very distant chunks (reduced for performance)
     }
 }

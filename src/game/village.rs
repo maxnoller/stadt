@@ -38,8 +38,16 @@ fn spawn_villages_on_new_chunks(
             // Get height at this position
             let world_x = chunk_transform.translation.x + local_x;
             let world_z = chunk_transform.translation.z + local_z;
-            let noise_val = noise.noise.get_noise_2d(world_x, world_z);
-            let y = noise_val * config.max_height;
+
+            // Use same height calculation as terrain mesh
+            let y = crate::game::terrain::mesh::sample_terrain_height(
+                world_x, world_z, &noise, &config,
+            );
+
+            // Only spawn above water
+            if y < config.water_level + 1.0 {
+                continue;
+            }
 
             // Spawn Village
             let mesh_handle = meshes.add(Cuboid::new(5.0, 5.0, 5.0));
