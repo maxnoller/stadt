@@ -21,15 +21,16 @@ mod train;
 mod village;
 
 fn setup_lights(mut commands: Commands) {
+    // Directional light (sun)
     commands.spawn((
         DirectionalLight {
             shadows_enabled: true,
-            illuminance: 10_000.0,
+            illuminance: 15_000.0,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(
             EulerRot::XYZ,
-            -std::f32::consts::FRAC_PI_4,
+            -std::f32::consts::FRAC_PI_3, // Steeper angle for better shadows
             -std::f32::consts::FRAC_PI_4,
             0.0,
         )),

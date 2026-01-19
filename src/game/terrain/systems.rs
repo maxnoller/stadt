@@ -40,8 +40,10 @@ pub fn update_chunks(
 
                 let mesh_handle = meshes.add(mesh);
                 let material_handle = materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.2, 0.7, 0.3), // Grass green
-                    perceptual_roughness: 0.9,
+                    base_color: Color::WHITE, // Vertex colors will modulate this
+                    perceptual_roughness: 0.8,
+                    metallic: 0.0,
+                    reflectance: 0.3,
                     ..default()
                 });
 
