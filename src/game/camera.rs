@@ -1,3 +1,4 @@
+use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 
 pub struct CameraPlugin;
@@ -20,11 +21,11 @@ fn setup_camera(mut commands: Commands) {
 fn camera_movement(
     time: Res<Time>,
     input: Res<ButtonInput<KeyCode>>,
+    scroll: Res<AccumulatedMouseScroll>,
     mut query: Query<&mut Transform, With<Camera3d>>,
 ) {
     let speed = 50.0;
-    let _rotation_speed = 2.0;
-    let _scroll_speed = 50.0; // Simulated scroll speed for now, or just Q/E zoom
+    let zoom_speed = 5.0;
 
     for mut transform in &mut query {
         let mut velocity = Vec3::ZERO;
@@ -49,7 +50,7 @@ fn camera_movement(
             velocity += right_xz;
         }
 
-        // Zoom/Height control (QE or Scroll later)
+        // Zoom/Height control with keyboard
         if input.pressed(KeyCode::KeyE) {
             velocity += Vec3::Y;
         }
@@ -58,5 +59,11 @@ fn camera_movement(
         }
 
         transform.translation += velocity * speed * time.delta_secs();
+
+        // Mouse wheel zoom
+        if scroll.delta.y != 0.0 {
+            transform.translation.y -= scroll.delta.y * zoom_speed;
+            transform.translation.y = transform.translation.y.clamp(10.0, 200.0);
+        }
     }
 }
