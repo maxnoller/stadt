@@ -1,10 +1,14 @@
-# Fast linker configuration
-# Uncomment below if you have lld installed (sudo apt install lld clang)
-# [target.x86_64-unknown-linux-gnu]
-# linker = "clang"
-# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+# Fast compile configuration for Bevy development
+# See: https://bevyengine.org/learn/quick-start/getting-started/setup/
 
-# Or for mold (if installed):
-# [target.x86_64-unknown-linux-gnu]
-# linker = "clang"
-# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+# Enable mold linker for significantly faster linking (up to 5x faster than lld)
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# Nightly-only optimizations (uncomment if using nightly toolchain):
+# rustflags = [
+#   "-C", "link-arg=-fuse-ld=mold",
+#   "-Zshare-generics=y",  # Share generic monomorphizations between crates
+#   "-Zthreads=0",         # Use all available CPU threads for compilation
+# ]
