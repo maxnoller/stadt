@@ -1,4 +1,11 @@
-use super::{ATTRIBUTE_MORPH_HEIGHT, TerrainConfig, TerrainNoise};
+//! Terrain mesh generation
+//!
+//! Generates terrain meshes with smooth normals, vertex colors for biomes,
+//! and morph heights for smooth LOD transitions.
+
+use crate::config::TerrainConfig;
+use crate::heightmap::{TerrainNoise, sample_terrain_height};
+use crate::material::ATTRIBUTE_MORPH_HEIGHT;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::Indices;
 use bevy::prelude::*;
@@ -51,8 +58,6 @@ pub fn generate_chunk_mesh(
             positions.push([local_x, height, local_z]);
 
             // Calculate morph height for LOD transitions
-            // Vertices at even positions exist at lower LOD, keep their actual height
-            // Vertices at odd positions are removed at lower LOD, interpolate from corners
             let morph_height = calculate_morph_height(&heights, x, z);
             morph_heights.push(morph_height);
 
@@ -63,13 +68,11 @@ pub fn generate_chunk_mesh(
 
             // Biome color based on height, slope, and moisture
             let normal_vec = Vec3::from_array(normal);
-            // World position for moisture/noise sampling
-            // Must match actual vertex world position (start + local offset)
             let world_x = start_x + local_x;
             let world_z = start_z + local_z;
 
-            let moisture = sample_moisture(world_x, world_z, noise);
-            let detail_noise_val = sample_detail_noise(world_x, world_z, noise);
+            let moisture = noise.sample_moisture(world_x, world_z);
+            let detail_noise_val = noise.sample_detail(world_x, world_z);
             let color = terrain_to_color(
                 height,
                 moisture,
@@ -204,101 +207,6 @@ fn add_skirts(
     }
 }
 
-/// Sample terrain height using multi-layer noise with erosion approximation
-pub fn sample_terrain_height(
-    world_x: f32,
-    world_z: f32,
-    noise: &TerrainNoise,
-    config: &TerrainConfig,
-) -> f32 {
-    let warp_x = noise.warp.get_noise_2d(world_x, world_z) * config.warp_strength;
-    let warp_z = noise.warp.get_noise_2d(world_x + 1000.0, world_z + 1000.0) * config.warp_strength;
-    let wx = world_x + warp_x;
-    let wz = world_z + warp_z;
-
-    // Continental: -1 to 1 range, normalized to 0-1
-    let continental = (noise.continental.get_noise_2d(wx, wz) + 1.0) * 0.5;
-    let erosion_raw = noise.erosion.get_noise_2d(wx, wz);
-    let erosion = (erosion_raw + 1.0) * 0.5;
-
-    // Ridges: Sharp features
-    let ridge = noise.ridges.get_noise_2d(wx, wz);
-    // Mask ridges to only appear on "high" areas of continental noise
-    let mountain_mask = (continental - config.mountain_threshold * 0.5).max(0.0) * 2.5;
-    let ridge_masked = ridge.max(0.0) * mountain_mask.powf(1.2);
-
-    // Detail noise for surface roughness
-    let detail = noise.detail.get_noise_2d(wx, wz) * 0.02;
-
-    // --- Erosion approximation ---
-    // 1. Valley carving: In low areas, use erosion noise to carve deeper channels
-    //    This simulates water collecting and eroding valleys
-    let valley_factor = (1.0 - continental).powf(2.0); // Stronger in lowlands
-    let valley_carve = erosion_raw.min(0.0).abs() * valley_factor * 0.15;
-
-    // 2. Plateau effect: High continental areas get flattened tops
-    //    This simulates weathering and sediment settling on peaks
-    let plateau_factor = (continental - 0.7).max(0.0) * 3.0; // Active above 0.7
-    let plateau_smoothing = plateau_factor * (1.0 - erosion) * 0.1;
-
-    // 3. Coastal shelves: Create gradual slopes near water level
-    let coastal_factor =
-        smoothstep(0.1, 0.25, continental) * (1.0 - smoothstep(0.25, 0.4, continental));
-    let coastal_flatten = coastal_factor * 0.05;
-
-    // Combined height with erosion effects
-    let base_combined = continental * 0.30 + erosion * 0.45 + ridge_masked * 0.25 + detail;
-    let combined =
-        (base_combined - valley_carve + plateau_smoothing - coastal_flatten).clamp(0.0, 1.0);
-
-    let curved = apply_height_curve(combined);
-    (curved * config.max_height) - config.water_level
-}
-
-fn sample_moisture(x: f32, z: f32, noise: &TerrainNoise) -> f32 {
-    // Moisture map: 0 = dry (desert), 1 = wet (rainforest)
-    // Coordinates are scaled by 0.5 to create broader climate zones.
-    // Combined with the base frequency of 0.0005, effective frequency is ~0.00025.
-    // This produces large-scale biome regions (deserts, rainforests) spanning many chunks.
-    let val = noise.moisture.get_noise_2d(x * 0.5, z * 0.5);
-    (val + 1.0) * 0.5
-}
-
-fn sample_detail_noise(x: f32, z: f32, noise: &TerrainNoise) -> f32 {
-    noise.detail.get_noise_2d(x, z)
-}
-
-fn apply_height_curve(value: f32) -> f32 {
-    let t = value.clamp(0.0, 1.0);
-    // Multi-stage curve for natural terrain:
-    // - Deep ocean (0.0-0.15): Gentle slope
-    // - Continental shelf (0.15-0.25): Steeper transition to land
-    // - Coastal lowlands (0.25-0.40): Flat plains
-    // - Rolling hills (0.40-0.60): Gradual rise
-    // - Highlands (0.60-0.75): Steeper foothills
-    // - Mountains (0.75-1.0): Dramatic peaks
-    if t < 0.15 {
-        // Deep ocean floor
-        t * 0.5
-    } else if t < 0.25 {
-        // Continental shelf rise
-        0.075 + (t - 0.15) * 1.5
-    } else if t < 0.40 {
-        // Coastal lowlands (flatter)
-        0.225 + (t - 0.25) * 0.8
-    } else if t < 0.60 {
-        // Rolling hills
-        0.345 + (t - 0.40) * 1.2
-    } else if t < 0.75 {
-        // Highland foothills
-        0.585 + (t - 0.60) * 1.4
-    } else {
-        // Mountain peaks (exponential rise for drama)
-        let mountain_t = (t - 0.75) / 0.25; // 0 to 1 in mountain range
-        0.795 + mountain_t.powf(0.7) * 0.205
-    }
-}
-
 fn calculate_smooth_normal(heights: &[Vec<f32>], x: usize, z: usize, step: f32) -> [f32; 3] {
     let left = heights[z][x.saturating_sub(1)];
     let right = heights[z][(x + 1).min(heights[z].len() - 1)];
@@ -316,9 +224,6 @@ fn calculate_smooth_normal(heights: &[Vec<f32>], x: usize, z: usize, step: f32) 
 /// For CDLOD geomorphing:
 /// - Vertices at even grid positions (exist at lower LOD): morph_height = actual height
 /// - Vertices at odd positions (removed at lower LOD): bilinear interpolate from 4 corners
-///
-/// The `heights` array has a 1-cell border for normal calculation, so actual vertex
-/// data is at indices [1..subdivisions+2]. The x,z parameters are grid positions (0..subdivisions).
 fn calculate_morph_height(heights: &[Vec<f32>], x: u32, z: u32) -> f32 {
     // Convert to usize with offset for the heights array border
     let hx = (x + 1) as usize;
@@ -326,7 +231,6 @@ fn calculate_morph_height(heights: &[Vec<f32>], x: u32, z: u32) -> f32 {
     let actual_height = heights[hz][hx];
 
     // Check if this vertex would exist at the next lower LOD (half resolution)
-    // At lower LOD, only vertices at even positions remain
     let x_even = x.is_multiple_of(2);
     let z_even = z.is_multiple_of(2);
 
@@ -469,4 +373,42 @@ fn lerp_color(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
         a[2] + (b[2] - a[2]) * t,
         1.0,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_smoothstep() {
+        assert_eq!(smoothstep(0.0, 1.0, 0.0), 0.0);
+        assert_eq!(smoothstep(0.0, 1.0, 1.0), 1.0);
+        assert!((smoothstep(0.0, 1.0, 0.5) - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_lerp_color() {
+        let white = [1.0, 1.0, 1.0, 1.0];
+        let black = [0.0, 0.0, 0.0, 1.0];
+
+        let mid = lerp_color(black, white, 0.5);
+        assert!((mid[0] - 0.5).abs() < 0.001);
+        assert!((mid[1] - 0.5).abs() < 0.001);
+        assert!((mid[2] - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_mesh_generation() {
+        let noise = TerrainNoise::default();
+        let config = TerrainConfig::default();
+
+        let mesh = generate_chunk_mesh(IVec2::ZERO, 100.0, 8, &noise, &config);
+
+        // Check that mesh has required attributes
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_POSITION).is_some());
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_NORMAL).is_some());
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_some());
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_UV_0).is_some());
+        assert!(mesh.attribute(ATTRIBUTE_MORPH_HEIGHT).is_some());
+    }
 }

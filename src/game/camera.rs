@@ -1,5 +1,6 @@
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::input::mouse::AccumulatedMouseScroll;
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 
 pub struct CameraPlugin;
@@ -16,6 +17,17 @@ fn setup_camera(mut commands: Commands) {
     commands.spawn((
         Camera3d::default(),
         Transform::from_xyz(0.0, 350.0, 150.0).looking_at(Vec3::ZERO, Vec3::Y),
+        // Atmospheric fog for depth and to hide distant LOD artifacts
+        DistanceFog {
+            color: Color::srgba(0.7, 0.8, 0.9, 1.0),
+            directional_light_color: Color::srgba(1.0, 0.95, 0.85, 0.5),
+            directional_light_exponent: 30.0,
+            falloff: FogFalloff::from_visibility_colors(
+                4000.0,                      // visibility distance - starts fading at ~4km
+                Color::srgb(0.6, 0.7, 0.85), // extinction color (blueish haze)
+                Color::srgb(0.85, 0.9, 1.0), // inscattering color (bright horizon)
+            ),
+        },
     ));
 }
 

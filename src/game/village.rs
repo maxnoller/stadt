@@ -1,5 +1,7 @@
-use crate::game::terrain::{Chunk, TerrainConfig, TerrainNoise};
 use bevy::prelude::*;
+use bevy_stadt_terrain::Chunk;
+use bevy_stadt_terrain::heightmap::{TerrainNoise, sample_terrain_height};
+use bevy_stadt_terrain::prelude::*;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -20,9 +22,11 @@ fn spawn_villages_on_new_chunks(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     config: Res<TerrainConfig>,
-    noise: Res<TerrainNoise>,
 ) {
     let village_probability = 0.3; // 30% chance per chunk
+
+    // Use default noise for height sampling (same as terrain generation)
+    let noise = TerrainNoise::with_seed(42);
 
     for (chunk_entity, chunk, chunk_transform) in chunk_query.iter() {
         // Deterministic RNG based on chunk coordinates
@@ -40,9 +44,7 @@ fn spawn_villages_on_new_chunks(
             let world_z = chunk_transform.translation.z + local_z;
 
             // Use same height calculation as terrain mesh
-            let y = crate::game::terrain::mesh::sample_terrain_height(
-                world_x, world_z, &noise, &config,
-            );
+            let y = sample_terrain_height(world_x, world_z, &noise, &config);
 
             // Only spawn above water
             if y < config.water_level + 1.0 {

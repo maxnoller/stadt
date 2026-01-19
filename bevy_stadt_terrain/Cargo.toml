@@ -1,0 +1,22 @@
+[package]
+name = "bevy_stadt_terrain"
+version = "0.1.0"
+edition = "2024"
+description = "A standalone Bevy terrain plugin with CDLOD, async streaming, and texture splatting"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+rapier = ["bevy_rapier3d"]
+
+[dependencies]
+bevy = "0.18"
+fastnoise-lite = "1.1.1"
+futures-lite = "2.6"
+
+[dependencies.bevy_rapier3d]
+version = "0.30"
+optional = true
+
+[dev-dependencies]
+bevy = { version = "0.18", features = ["dynamic_linking"] }

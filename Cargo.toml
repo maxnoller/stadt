@@ -1,3 +1,7 @@
+[workspace]
+members = ["bevy_stadt_terrain"]
+resolver = "3"
+
 [package]
 name = "stadt"
 version = "0.1.0"
@@ -5,6 +9,7 @@ edition = "2024"
 
 [dependencies]
 bevy = { version = "0.18", features = ["dynamic_linking"] }
+bevy_stadt_terrain = { path = "bevy_stadt_terrain" }
 fastnoise-lite = "1.1.1"
 rand = "0.9.2"
 
