@@ -76,6 +76,12 @@ pub struct TerrainStreaming {
     pub completed: Vec<MeshResult>,
     /// Set of node IDs that already have entities
     pub spawned: HashMap<u64, Entity>,
+    /// Parent node IDs waiting for their children to be spawned (subdivision case)
+    /// Maps parent_id -> set of child_ids that need to be ready before despawning parent
+    pub waiting_for_children: HashMap<u64, std::collections::HashSet<u64>>,
+    /// Child node IDs waiting for their parent to be spawned (merge case)
+    /// Maps child_id -> parent_id that needs to be ready before despawning child
+    pub waiting_for_parent: HashMap<u64, u64>,
 }
 
 impl TerrainStreaming {
@@ -192,23 +198,79 @@ pub fn update_quadtree(
         }
     }
 
-    // Mark nodes that are no longer selected for removal
+    // Mark nodes that are no longer selected for removal, but handle LOD transitions gracefully
     let selected_ids: std::collections::HashSet<u64> = quadtree
         .collect_selected_nodes()
         .iter()
         .map(|n| n.id)
         .collect();
 
-    let to_remove: Vec<u64> = streaming
+    // Find nodes that need to be removed (spawned but not selected)
+    let spawned_not_selected: Vec<u64> = streaming
         .spawned
         .keys()
         .filter(|id| !selected_ids.contains(id))
         .cloned()
         .collect();
 
-    // We'll handle removal in spawn_chunk_entities
-    for id in to_remove {
-        streaming.spawned.remove(&id);
+    for node_id in spawned_not_selected {
+        // Case 1: Check if this node's CHILDREN are now selected (subdivision: parent -> children)
+        let child_ids: Vec<u64> = (1..=4).map(|i| node_id * 4 + i).collect();
+        let children_selected: Vec<u64> = child_ids
+            .iter()
+            .filter(|id| selected_ids.contains(id))
+            .cloned()
+            .collect();
+
+        if !children_selected.is_empty() {
+            // This is a parent that subdivided - keep it until all children are spawned
+            let all_children_spawned = children_selected
+                .iter()
+                .all(|id| streaming.spawned.contains_key(id));
+
+            if all_children_spawned {
+                // All children ready, safe to remove parent
+                streaming.spawned.remove(&node_id);
+                streaming.waiting_for_children.remove(&node_id);
+            } else {
+                // Children not ready - keep parent visible
+                let pending_children: std::collections::HashSet<u64> = children_selected
+                    .iter()
+                    .filter(|id| !streaming.spawned.contains_key(id))
+                    .cloned()
+                    .collect();
+                streaming
+                    .waiting_for_children
+                    .insert(node_id, pending_children);
+            }
+            continue;
+        }
+
+        // Case 2: Check if this node's PARENT is now selected (merge: children -> parent)
+        // Parent ID calculation: for child = parent*4 + offset (offset 1-4)
+        // So parent = (child - 1) / 4 (integer division) for child > 4
+        if node_id > 4 {
+            let parent_id = (node_id - 1) / 4;
+            if selected_ids.contains(&parent_id) {
+                // This is a child that should merge back into parent
+                let parent_spawned = streaming.spawned.contains_key(&parent_id);
+
+                if parent_spawned {
+                    // Parent is ready, safe to remove child
+                    streaming.spawned.remove(&node_id);
+                    streaming.waiting_for_parent.remove(&node_id);
+                } else {
+                    // Parent not ready - keep child visible
+                    streaming.waiting_for_parent.insert(node_id, parent_id);
+                }
+                continue;
+            }
+        }
+
+        // Case 3: Node went out of view entirely (not LOD transition)
+        streaming.spawned.remove(&node_id);
+        streaming.waiting_for_children.remove(&node_id);
+        streaming.waiting_for_parent.remove(&node_id);
     }
 }
 
@@ -322,7 +384,41 @@ pub fn spawn_chunk_entities(
             .id();
 
         streaming.spawned.insert(result.node_id, entity);
+
+        // Case A: Check if this node's parent was waiting for it (we're a child being spawned)
+        // Parent ID is (child_id - 1) / 4
+        if result.node_id > 4 {
+            let parent_id = (result.node_id - 1) / 4;
+
+            if let Some(waiting_children) = streaming.waiting_for_children.get_mut(&parent_id) {
+                waiting_children.remove(&result.node_id);
+
+                // If all children are now spawned, remove parent from spawned
+                if waiting_children.is_empty() {
+                    streaming.spawned.remove(&parent_id);
+                }
+            }
+        }
+
+        // Case B: Check if any children were waiting for this node (we're a parent being spawned)
+        // Children that were waiting for this parent can now be removed
+        let children_waiting: Vec<u64> = streaming
+            .waiting_for_parent
+            .iter()
+            .filter(|(_, parent)| **parent == result.node_id)
+            .map(|(child, _)| *child)
+            .collect();
+
+        for child_id in children_waiting {
+            streaming.spawned.remove(&child_id);
+            streaming.waiting_for_parent.remove(&child_id);
+        }
     }
+
+    // Clean up fully satisfied waiting parents
+    streaming
+        .waiting_for_children
+        .retain(|_, children| !children.is_empty());
 
     // Despawn chunks that are no longer needed
     let spawned_ids: std::collections::HashSet<u64> = streaming.spawned.keys().cloned().collect();

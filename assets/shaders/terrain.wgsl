@@ -6,10 +6,11 @@
     view_transformations::position_world_to_clip,
 }
 
-// Morph distances - these could be made configurable via push constants or global uniform
-// Morphing starts at MORPH_START and completes at MORPH_END
-const MORPH_START: f32 = 150.0;
-const MORPH_END: f32 = 300.0;
+// Vertex morphing is disabled - it caused visual artifacts with quadtree-based LOD
+// where chunks are swapped rather than morphed. Skirts hide the LOD seams instead.
+// To re-enable, set these to match your LOD distance thresholds.
+const MORPH_START: f32 = 999999.0;
+const MORPH_END: f32 = 999999.0;
 
 // Custom vertex input with morph_height attribute
 struct TerrainVertex {
